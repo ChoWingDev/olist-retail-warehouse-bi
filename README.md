@@ -13,14 +13,15 @@ and (next) will model a star schema (DW) and analytics marts for BI dashboards a
 
 ## Project Structure
 
+```text
+.
 ├── docker-compose.yml
-├── data_raw/ # ignored by git (raw CSV files)
+├── data_raw/                  # ignored by git (raw CSV files)
 ├── sql/
-│ ├── 00_create_schemas.sql
-│ ├── 01_create_raw_tables.sql
-│ ├── 01_reset_raw_tables.sql
-│ ├── 02_copy_raw_data.sql
-│ └── (next) dw/ mart/ scripts...
+│   ├── 00_create_schemas.sql
+│   ├── 01_create_raw_tables.sql
+│   ├── 01_reset_raw_tables.sql
+│   └── 02_copy_raw_data.sql
 └── README.md
 
 
