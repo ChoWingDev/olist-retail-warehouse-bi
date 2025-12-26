@@ -1,15 +1,14 @@
-
 # Olist Retail Warehouse & BI (Postgres → DW → Analytics Marts)
 
 End-to-end analytics engineering project using the Brazilian Olist e-commerce dataset.
 Built a reproducible local data warehouse with Docker + PostgreSQL, loaded raw CSVs into a **RAW layer**,
-modeled a **star schema DW layer (dimensions + fact)**, and will next build **analytics marts** for BI dashboards and R analysis.
+modeled a **star schema DW layer (dimensions + fact)**, and built initial **analytics marts** for customer analytics (RFM).
 
 ## Tech Stack
 - PostgreSQL (Docker)
 - SQL (raw → dw → mart)
 - (Planned) Tableau dashboard
-- (Planned) R analysis (logistic regression, RFM segmentation)
+- (Planned) R analysis (logistic regression, segmentation)
 - (Planned) Redshift validation (same schema + marts)
 
 ## Project Structure
@@ -26,7 +25,12 @@ modeled a **star schema DW layer (dimensions + fact)**, and will next build **an
 │   ├── 10_create_dw_tables.sql
 │   ├── 11_load_dw_dims.sql
 │   ├── 12_load_dw_fact.sql
-│   └── 13_dw_indexes_and_qa.sql
+│   ├── 13_dw_indexes_and_qa.sql
+│   ├── 03_create_mart_schema.sql
+│   ├── 04_mart_order_facts.sql
+│   ├── 04b_mart_order_facts_indexes.sql
+│   ├── 05_mart_customer_rfm.sql
+│   └── 06_qa_customer_rfm.sql
 └── README.md
 ````
 
@@ -113,6 +117,28 @@ ORDER BY t;
 "
 ```
 
+## Build Analytics Marts
+
+### 10) Create mart schema
+
+```bash
+docker exec -i olist_postgres psql -U olist -d olist_dw -v ON_ERROR_STOP=1 < sql/03_create_mart_schema.sql
+```
+
+### 11) Build order_facts (order-level mart)
+
+```bash
+docker exec -i olist_postgres psql -U olist -d olist_dw -v ON_ERROR_STOP=1 < sql/04_mart_order_facts.sql
+docker exec -i olist_postgres psql -U olist -d olist_dw -v ON_ERROR_STOP=1 < sql/04b_mart_order_facts_indexes.sql
+```
+
+### 12) Build customer RFM mart + QA
+
+```bash
+docker exec -i olist_postgres psql -U olist -d olist_dw -v ON_ERROR_STOP=1 < sql/05_mart_customer_rfm.sql
+docker exec -i olist_postgres psql -U olist -d olist_dw -v ON_ERROR_STOP=1 < sql/06_qa_customer_rfm.sql
+```
+
 ## Reset RAW Layer (Optional)
 
 If you need to rebuild the raw layer from scratch:
@@ -128,32 +154,75 @@ docker exec -i olist_postgres psql -U olist -d olist_dw -v ON_ERROR_STOP=1 < sql
 The DW layer follows a star schema to support reusable BI queries and downstream marts.
 
 ### Grain
-- **Fact table grain:** 1 row per **order item** (`order_id`, `order_item_id`)
+
+* **Fact table grain:** 1 row per **order item** (`order_id`, `order_item_id`)
 
 ### Tables
+
 **Dimensions**
-- `dw.dim_customer` (PK: `customer_id`)  
+
+* `dw.dim_customer` (PK: `customer_id`)
   Customer attributes: unique_id, city/state, zip prefix
-- `dw.dim_sellers` (PK: `seller_id`)  
+* `dw.dim_sellers` (PK: `seller_id`)
   Seller attributes: city/state, zip prefix
-- `dw.dim_products` (PK: `product_id`)  
+* `dw.dim_products` (PK: `product_id`)
   Product attributes: category + **English category name** (via translation table), weight/dimensions
-- `dw.dim_date` (PK: `date_key`)  
+* `dw.dim_date` (PK: `date_key`)
   Calendar attributes: year/month/day/day_of_week (1 row per calendar day)
 
 **Fact**
-- `dw.fact_order_items` (PK: `order_id`, `order_item_id`)  
+
+* `dw.fact_order_items` (PK: `order_id`, `order_item_id`)
   Order-item measures and events:
-  - Measures: `price`, `freight_value`
-  - Order context: `order_status`
-  - Timestamps: purchase/approval/delivery/estimated delivery, shipping limit
+
+  * Measures: `price`, `freight_value`
+  * Order context: `order_status`
+  * Timestamps: purchase/approval/delivery/estimated delivery, shipping limit
 
 ### Join Keys
-- `dw.fact_order_items.customer_id` → `dw.dim_customer.customer_id`
-- `dw.fact_order_items.seller_id` → `dw.dim_sellers.seller_id`
-- `dw.fact_order_items.product_id` → `dw.dim_products.product_id`
-- (For time slicing) `purchase_ts::date` → `dw.dim_date.date_key`
 
+* `dw.fact_order_items.customer_id` → `dw.dim_customer.customer_id`
+* `dw.fact_order_items.seller_id` → `dw.dim_sellers.seller_id`
+* `dw.fact_order_items.product_id` → `dw.dim_products.product_id`
+* (For time slicing) `purchase_ts::date` → `dw.dim_date.date_key`
+
+## Analytics Marts
+
+### mart.order_facts
+
+**Purpose:** Order-level summary for delivery SLAs, payment metrics, and customer analytics.
+**Grain:** 1 row per **order** (`order_id`).
+
+**Key fields**
+
+* Identifiers: `order_id`, `customer_id`, `order_status`
+* Timestamps: `purchase_ts`, `approved_ts`, `delivered_carrier_ts`, `delivered_customer_ts`, `estimated_delivery_date`
+* Delivery KPIs: `delivery_days`, `is_late`
+* Items aggregated: `items_cnt`, `items_revenue`, `freight_total`, `gmv`
+* Payments aggregated: `payment_value_total`, `max_installments`, `primary_payment_type`
+
+### mart.customer_rfm
+
+**Purpose:** Customer segmentation for retention / win-back analysis.
+**Grain:** 1 row per **customer** (uses `customer_unique_id` as `customer_id`).
+
+**Definitions**
+
+* Orders included: `order_status = 'delivered'`
+* `as_of_date`: `MAX(purchase_ts)::date` (dataset-stable reference date)
+* Recency: `recency_days = as_of_date - last_purchase_date` (smaller = more recent)
+* Frequency: number of delivered orders per customer
+* Monetary: `SUM(payment_value_total)` per customer
+
+**Scoring**
+
+* Uses quintiles: `NTILE(5)` to assign `r_score`, `f_score`, `m_score` in `[1..5]`
+* Recency is reversed so that more recent customers get higher `r_score`
+
+**Segments (current)**
+
+* `champions`, `loyal_customers`, `new_customers`, `new_high_value`,
+  `at_risk_loyal`, `big_spenders_at_risk`, `lost`, `others`
 
 ## Roadmap
 
@@ -161,7 +230,8 @@ The DW layer follows a star schema to support reusable BI queries and downstream
 * [x] RAW layer: schemas, tables, and CSV load
 * [x] DW layer: star schema (dims + fact)
 * [x] DW performance + QA (indexes, PK uniqueness, date range checks)
-* [ ] Analytics marts: delivery→review, RFM, seller SLA
+* [x] Analytics marts: order_facts + RFM
+* [ ] Additional marts: delivery→review, seller SLA
 * [ ] Tableau dashboard
 * [ ] R analysis (logistic regression, segmentation)
 * [ ] Redshift validation
