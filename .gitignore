@@ -12,3 +12,34 @@ data_processed/
 
 # OS
 .DS_Store
+
+
+# R
+.Rhistory
+.RData
+.Rproj.user/
+
+# Python
+__pycache__/
+*.pyc
+
+# Tableau
+Tableau/
+*.twb
+*.twbx
+*.hyper
+*.tde
+
+# editor
+.vscode/
+
+# local scratch/session
+*.session.sql
+
+# outputs
+*.pdf
+
+# model artifacts (optional)
+models/
+# or if you only want to ignore rds:
+# models/*.rds

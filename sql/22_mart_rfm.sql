@@ -66,7 +66,7 @@ SELECT
     CASE
         WHEN r_score >=4 AND f_score >=4 AND m_score >=4 THEN 'champions'
         WHEN r_score >=4 AND f_score >=3 THEN 'loyal_customers'
-        --new customer vs new_high_value
+        --new customer vs new_high_value 
         WHEN frequency =1 AND r_score >=4 AND m_score >=4 THEN 'new_high_value'
         WHEN frequency =1 AND r_score >=4 THEN 'new_customers'
         --at risk

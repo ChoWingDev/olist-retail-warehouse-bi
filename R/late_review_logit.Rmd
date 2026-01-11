@@ -1,0 +1,238 @@
+---
+title: "Predict low review using delivery features"
+author: "Cho Wing Chan"
+date: "2025-12-31"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Packages
+## Purpose
+We trained a ridge-regularized logistic regression (L2 penalty; glmnet, alpha = 0) to predict low review (is_low_review = 1) using delivery delay buckets, price, freight, item count, and month. Ridge regularization was used to ensure stable estimation under potential (quasi-)separation and to improve generalization.
+```{r packages}
+library(DBI)
+library(RPostgres)
+library(dplyr)
+library(glmnet)
+library(pROC)
+```
+
+## Load data from Postgres
+
+```{r load_data, echo=FALSE}
+con <- dbConnect(
+  RPostgres::Postgres(),
+  host = "localhost",
+  port = 5432,
+  dbname = "olist_dw",
+  user = "olist",
+  password = "olistpw"
+)
+
+delivery_review_df <- dbGetQuery(con, "
+  SELECT
+    order_id,
+    is_low_review,
+    delay_bucket,
+    log_price,
+    log_freight_value,
+    items_count,
+    month
+  FROM mart.v_sla_model_cohort;
+")
+dbDisconnect(con)
+```
+
+
+## Quick sanity checks
+
+```{r sanity, echo=FALSE}
+dim(delivery_review_df)
+head(delivery_review_df)
+```
+
+
+## Data cleaning + feature engineering
+Goal:
+- Keep complete cases for modeling
+- Cap extreme delays (reduce outlier impact)
+- Log-transform skewed monetary variables
+- Bucket delay to make the relationship more stable and reduce separation risk
+```{r Data_cleaning, echo=FALSE}
+delivery_review_clean_df <- delivery_review_df %>%
+  mutate(
+    is_low_review = as.integer(is_low_review),
+    delay_bucket = factor(delay_bucket, levels=c("0","1-3","4-7","8-14","15-30")),
+    month = factor(month)
+  )
+
+```
+## Train / test split
+
+```{r data_split, echo=FALSE}
+set.seed(42)
+idx <- sample(seq_len(nrow(delivery_review_clean_df)),
+              size = floor(0.8 * nrow(delivery_review_clean_df)))
+
+train_df <- delivery_review_clean_df[idx, ]
+test_df  <- delivery_review_clean_df[-idx, ]
+```
+
+## Design matrix for glmnet
+glmnet expects an X matrix (numeric) and y vector (0/1)
+
+```{r matrix, echo=FALSE}
+x_train <- model.matrix(
+  is_low_review ~ delay_bucket + log_price + log_freight_value + items_count + month,
+  data = train_df
+)[, -1]  # drop intercept column
+
+y_train <- train_df$is_low_review
+```
+
+## Ridge logistic with k-fold CV to pick lambda
+
+Why ridge (L2)?
+- Logistic regression may fail to converge under (quasi-)separation
+- Ridge shrinks coefficients, stabilizes estimation, and improves generalization
+
+```{r ridge_logistic, echo=FALSE}
+set.seed(42)
+cvfit <- cv.glmnet(
+  x_train, y_train,
+  family = "binomial",
+  alpha = 0,      # alpha=0 => ridge (L2)
+  nfolds = 5
+)
+
+cvfit$lambda.min   # best CV score (more flexible)
+cvfit$lambda.1se   # within 1 SE (more regularized / more stable)
+
+dir.create("../models", showWarnings = FALSE)
+saveRDS(cvfit, "../models/cvfit_ridge_logit_v1.rds")
+
+```
+
+## Evaluate on test set using AUC
+AUC = 0.704 on the test set, indicating the model has meaningful ability to rank low-review orders above non-low-review orders (above random baseline of 0.5).
+```{r AUC, echo=FALSE}
+x_test <- model.matrix(
+  is_low_review ~ delay_bucket + log_price + log_freight_value + items_count + month,
+  data = test_df
+)[, -1]
+
+y_test <- test_df$is_low_review
+
+# Predicted probabilities
+p_min <- as.numeric(predict(cvfit, newx = x_test, s = "lambda.min", type = "response"))
+p_1se <- as.numeric(predict(cvfit, newx = x_test, s = "lambda.1se", type = "response"))
+
+# AUC: probability the model ranks a random positive higher than a random negative
+auc_min <- pROC::auc(pROC::roc(y_test, p_min))
+auc_1se <- pROC::auc(pROC::roc(y_test, p_1se))
+
+auc_min
+auc_1se
+```
+
+# Choose a decision threshold (turn prob -> 0/1)
+Threshold controls the precision/recall trade-off.
+- Higher threshold: fewer false positives, but more false negatives
+- Lower threshold: more true positives, but more false positives
+Decision threshold and confusion matrix
+
+Because the dataset is imbalanced (low reviews are ~12.8% of the test set), we evaluated classification performance at a practical threshold. We selected threshold = 0.20 to balance precision and recall (more balanced than 0.50, and far fewer false positives than the Youden threshold).
+
+At threshold = 0.20, the test confusion matrix was:
+
+TP = 809, FP = 460, FN = 1643, TN = 16254 (N = 19,166)
+
+Derived metrics:
+Precision = 0.638
+Recall (Sensitivity) = 0.330
+Specificity = 0.972
+Accuracy = 0.890
+F1-score = 0.435
+
+Interpretation: With a 0.20 threshold, the model identifies about one-third of low-review cases (recall ~33%) while keeping false alarms relatively limited (precision ~64%, specificity ~97%). This threshold provides a more balanced operating point than the default 0.50 in an imbalanced setting.
+```{r threshold, echo=FALSE}
+# Baseline thresholds for comparison
+pred_05 <- as.integer(p_1se >= 0.5)
+table(pred_05, y_test)
+
+pred_03 <- as.integer(p_1se >= 0.3)
+table(pred_03, y_test)
+
+# ROC-based threshold (Youden's J: sensitivity + specificity - 1)
+roc_obj <- pROC::roc(y_test, p_1se)
+best <- pROC::coords(
+  roc_obj,
+  x = "best",
+  best.method = "youden",
+  ret = c("threshold", "sensitivity", "specificity")
+)
+best
+
+thr_youden <- as.numeric(best$threshold[1])
+pred_youden <- as.integer(p_1se >= thr_youden)
+table(pred_youden, y_test)
+
+# A more balanced, practical threshold example
+thr_mid <- 0.2
+pred_02 <- as.integer(p_1se >= thr_mid)
+table(pred_02, y_test)
+
+#Coefficients at lambda.1se
+beta_1se <- coef(cvfit, s="lambda.1se")
+
+#Convert sparse matrix -> tidy table
+coef_df <- data.frame(
+  term = rownames(beta_1se),
+  beta = as.numeric(beta_1se)
+)
+
+# Add odds ratio for interpretability
+coef_df$odds_ratio <- exp(coef_df$beta)
+```
+
+## Show key terms first (delay buckets + month + numeric vars)
+
+1.Low-review risk increases sharply once delivery is delayed beyond ~4 days.
+Delay buckets show a steep rise in odds from the 4–7 day range onward, indicating customer dissatisfaction escalates once delays move into multi-day territory.
+
+2.Late delivery is the dominant predictor, with freight as a secondary contributor.
+Delay buckets are by far the strongest signals, while freight cost (log_freight) also shows a positive association with low-review risk—suggesting delays combined with higher shipping costs are key drivers of dissatisfaction.
+
+3.Other factors have relatively minor impact.
+Month effects are small (seasonality is mild), price has a negligible effect, and items_count contributes little after regularization.
+
+```{r coef, echo=FALSE}
+subset_df <- coef_df[grep("^delay_bucket|^month|log_price|log_freight|items_count|\\(Intercept\\)", coef_df$term), ]
+subset_df[order(subset_df$term), ]
+
+#top 10 strongest effects by absolute beta (excluding intercept)
+coef_no_intercept <- coef_df[coef_df$term != "(Intercept)", ]
+coef_no_intercept[order(-abs(coef_no_intercept$beta)), ][1:10, ]
+```
+
+## convert to probability 
+Using the training-set baseline (9.2% low-review probability for on-time deliveries), the model’s odds ratios imply that low-review risk rises to ~24% for 1–3 days late and to ~51% once delays reach 4–7 days, exceeding ~59–61% for delays beyond 8 days (holding other factors constant).
+
+```{r probability, echo=FALSE}
+p0 <- mean(train_df$is_low_review[train_df$delay_bucket == "0"])
+odds0 <- p0/(1-p0)
+
+or_bucket <- subset_df[grep("^delay_bucket", subset_df$term), c("term", "odds_ratio")]
+prob <- (odds0 * or_bucket$odds_ratio)/ (1+odds0*or_bucket$odds_ratio)
+
+out <- rbind(
+  data.frame(term="delay_bucket0 (baseline)", odds_ratio=1, prob=p0),
+  data.frame(term=or_bucket$term, odds_ratio=or_bucket$odds_ratio, prob=prob)
+)
+
+out
+```
+

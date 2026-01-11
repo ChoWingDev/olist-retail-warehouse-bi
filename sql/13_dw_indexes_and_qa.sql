@@ -1,9 +1,15 @@
+-- Grain constraint (1 row per order item)
+ALTER TABLE dw.fact_order_items
+  ADD CONSTRAINT IF NOT EXISTS uq_fact_order_items
+  UNIQUE (order_id, order_item_id);
+
 --Indexs (speed up joins & time filtering)
 CREATE INDEX IF NOT EXISTS idx_fact_customer_id ON dw.fact_order_items (customer_id);
 CREATE INDEX IF NOT EXISTS idx_fact_seller_id ON dw.fact_order_items (seller_id);
 CREATE INDEX IF NOT EXISTS idx_fact_product_id ON dw.fact_order_items (product_id);
 CREATE INDEX IF NOT EXISTS idx_fact_purchase_ts ON dw.fact_order_items (purchase_ts);   
 CREATE INDEX IF NOT EXISTS idx_fact_order_status ON dw.fact_order_items (order_status);
+CREATE INDEX IF NOT EXISTS idx_fact_order_id ON dw.fact_order_items (order_id);
 
 --QA Queries: date ranges and null rates for key timestamps
 SELECT 
