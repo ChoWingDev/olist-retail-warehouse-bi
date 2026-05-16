@@ -9,15 +9,14 @@
 \echo '=== (1) Create DW tables ==='
 \i /sql/10_create_dw_tables.sql
 \i /sql/11_load_dw_dim_tables.sql
-\i /sql/12_load_dw_facts.sql
+\i /sql/12_load_dw_facts_items.sql
 \i /sql/13_dw_indexes_and_qa.sql
 
 \echo '=== (3) Build marts ==='
-\i /sql/20_create_mart_schema.sql
 \i /sql/21_mart_order_facts.sql
 \i /sql/21b_mart_order_facts_indexes.sql
 \i /sql/22_mart_rfm.sql
-\i /sql/23_mart_sla.sql
+\i /sql/23_mart_sla_orders.sql
 \i /sql/24_mart_item_facts.sql
 \i /sql/24b_mart_item_facts_indexes.sql
 \i /sql/25_mart_delivery_review.sql

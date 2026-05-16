@@ -54,7 +54,7 @@ delivery_review_clean_df <- delivery_review_df %>%
     
     # Log transforms for heavy-tailed distributions
     log_price = log1p(price),
-    log_freight = log1p(freight_value),
+    log_freight_value = log1p(freight_value),
     
     # Delay buckets (more interpretable + more robust than raw days)
     delay_bucket = cut(
@@ -80,7 +80,7 @@ test_df  <- delivery_review_clean_df[-idx, ]
 # 5) Design matrix for glmnet --------------------------------
 # glmnet expects an X matrix (numeric) and y vector (0/1)
 x_train <- model.matrix(
-  is_low_review ~ delay_bucket + log_price + log_freight + items_count + month,
+  is_low_review ~ delay_bucket + log_price + log_freight_value + items_count + month,
   data = train_df
 )[, -1]  # drop intercept column
 
@@ -104,7 +104,7 @@ cvfit$lambda.1se   # within 1 SE (more regularized / more stable)
 
 # 7) Evaluate on test set using AUC ---------------------------
 x_test <- model.matrix(
-  is_low_review ~ delay_bucket + log_price + log_freight + items_count + month,
+  is_low_review ~ delay_bucket + log_price + log_freight_value + items_count + month,
   data = test_df
 )[, -1]
 
@@ -165,7 +165,7 @@ coef_df <- data.frame(
 coef_df$odds_ratio <- exp(coef_df$beta)
 
 #Show key terms first (delay buckets + month + numeric vars)
-subset_df <- coef_df[grep("^delay_bucket|^month|log_price|log_freight|items_count|\\(Intercept\\)", coef_df$term), ]
+subset_df <- coef_df[grep("^delay_bucket|^month|log_price|log_freight_value|items_count|\\(Intercept\\)", coef_df$term), ]
 subset_df[order(subset_df$term), ]
 
 #top 10 strongest effects by absolute beta (excluding intercept)

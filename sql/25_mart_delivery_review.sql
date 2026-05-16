@@ -38,4 +38,4 @@ SELECT
 
     EXTRACT(MONTH FROM a.purchase_ts)::int AS month
 FROM order_agg a
-JOIN review_one r
+JOIN review_one r ON a.order_id = r.order_id;

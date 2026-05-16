@@ -12,6 +12,10 @@ CREATE TABLE IF NOT EXISTS mart.sla_risk_scoring (
     PRIMARY KEY (order_id, score_date)
 );
 
-CREATE INDEX IF NOT EXISTS ix_sla_risk_scoring_order_id ON mart.sla_risk_scoring (risk_flag);
+--for joins/ lookup by order_id 
+CREATE INDEX IF NOT EXISTS ix_sla_risk_scoring_order_id ON mart.sla_risk_scoring (order_id);
+-- for dashbaord filtering by risk_flag
+CREATE INDEX IF NOT EXISTS ix_sla_risk_scoring_risk_flag ON mart.sla_risk_scoring (risk_flag);
+
 CREATE INDEX IF NOT EXISTS ix_sla_risk_scoring_flag ON mart.sla_risk_scoring (risk_flag);
 CREATE INDEX IF NOT EXISTS ix_sla_risk_scoring_score_date ON mart.sla_risk_scoring (score_date);
