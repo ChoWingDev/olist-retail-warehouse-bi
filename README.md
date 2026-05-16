@@ -1,11 +1,3 @@
-收到！看到你傳過來的實際檔案截圖了。你的 SQL 檔案分得很細、非常專業，而且 R 的部分也補上了具體的 Ridge Logistic Regression 模型（`.rds` 檔案）與 Batch 評分腳本。
-
-我幫你把這些**真實的檔案名稱、架構順序與機器學習工作流**完全同步到 `README.md` 中。這會讓你的 GitHub 專案看起來極度完整且具備生產環境（Production-ready）的架構。
-
-以下是全面更新後的 `README.md`：
-
----
-
 # Olist Retail Warehouse & BI (Postgres → DW → Analytics & Proactive Risk Scoring)
 
 End-to-end analytics engineering and data science project using the Brazilian Olist e-commerce dataset.
